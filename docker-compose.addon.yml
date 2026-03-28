@@ -1,0 +1,50 @@
+# Docker Compose add-on for pl-opencloud-server.
+# Plugs into the shared opencloud-net network and Traefik reverse proxy.
+#
+# Usage (from pl-opencloud-server/):
+#   docker compose -f docker-compose.yml -f traefik/opencloud.yml \
+#     -f ../opencloud-registration/docker-compose.addon.yml up -d --build
+#
+# Or add to COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.yml:traefik/opencloud.yml:../opencloud-registration/docker-compose.addon.yml
+
+services:
+  registration:
+    build:
+      context: ${REGISTRATION_APP_PATH:-../opencloud-registration}
+    networks:
+      opencloud-net:
+    environment:
+      LISTEN_ADDR: ":8080"
+      DB_PATH: "/data/registration.db"
+      REGISTRATION_MODE: "${REGISTRATION_MODE:-open}"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:?ADMIN_TOKEN is required}"
+      OC_URL: "https://${OC_DOMAIN:-cloud.opencloud.test}"
+      OC_ADMIN_USER: "${OC_ADMIN_USER:-admin}"
+      OC_ADMIN_PASSWORD: "${OC_ADMIN_PASSWORD:-admin}"
+      OC_INSECURE: "${INSECURE:-false}"
+      APP_BASE_URL: "https://${REGISTRATION_DOMAIN:-register.opencloud.test}"
+    volumes:
+      - registration-data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.registration.entrypoints=https"
+      - "traefik.http.routers.registration.rule=Host(`${REGISTRATION_DOMAIN:-register.opencloud.test}`)"
+      - "traefik.http.routers.registration.tls=true"
+      - "traefik.http.routers.registration.middlewares=hsts-header"
+      - "traefik.http.services.registration.loadbalancer.server.port=8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: always
+    logging:
+      driver: ${LOG_DRIVER:-local}
+
+volumes:
+  registration-data:
+
+networks:
+  opencloud-net:
+    external: true

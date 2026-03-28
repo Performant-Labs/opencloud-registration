@@ -1,0 +1,42 @@
+{{define "admin_row.html"}}
+{{if .Error}}
+<tr id="reg-{{.Reg.ID}}">
+  <td colspan="5" class="error">{{.Error}}</td>
+</tr>
+{{else if eq .Status "approved"}}
+<tr id="reg-{{.Reg.ID}}" class="row-approved">
+  <td>{{.Reg.DisplayName}}</td>
+  <td>{{.Reg.Username}}</td>
+  <td>{{.Reg.Email}}</td>
+  <td>{{.Reg.CreatedAt}}</td>
+  <td><span class="badge badge--approved">Approved</span></td>
+</tr>
+{{else if eq .Status "rejected"}}
+<tr id="reg-{{.Reg.ID}}" class="row-rejected">
+  <td>{{.Reg.DisplayName}}</td>
+  <td>{{.Reg.Username}}</td>
+  <td>{{.Reg.Email}}</td>
+  <td>{{.Reg.CreatedAt}}</td>
+  <td><span class="badge badge--rejected">Rejected</span></td>
+</tr>
+{{else}}
+<tr id="reg-{{.Reg.ID}}">
+  <td>{{.Reg.DisplayName}}</td>
+  <td>{{.Reg.Username}}</td>
+  <td>{{.Reg.Email}}</td>
+  <td>{{.Reg.CreatedAt}}</td>
+  <td class="actions">
+    <button class="btn-approve"
+            hx-post="/admin/approve/{{.Reg.ID}}?token={{.AdminToken}}"
+            hx-target="#reg-{{.Reg.ID}}"
+            hx-swap="outerHTML"
+            hx-confirm="Approve {{.Reg.Username}}?">Approve</button>
+    <button class="btn-reject"
+            hx-post="/admin/reject/{{.Reg.ID}}?token={{.AdminToken}}"
+            hx-target="#reg-{{.Reg.ID}}"
+            hx-swap="outerHTML"
+            hx-confirm="Reject {{.Reg.Username}}?">Reject</button>
+  </td>
+</tr>
+{{end}}
+{{end}}

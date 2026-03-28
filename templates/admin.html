@@ -1,0 +1,39 @@
+{{template "base" .}}
+
+{{define "title"}}Admin — OpenCloud Registration{{end}}
+
+{{define "content"}}
+<div class="card card--wide">
+  <h1>Registration requests</h1>
+
+  <nav class="tab-nav">
+    <a href="/admin?token={{.AdminToken}}&status=pending"
+       class="{{if eq .Status "pending"}}active{{end}}">Pending</a>
+    <a href="/admin?token={{.AdminToken}}&status=approved"
+       class="{{if eq .Status "approved"}}active{{end}}">Approved</a>
+    <a href="/admin?token={{.AdminToken}}&status=rejected"
+       class="{{if eq .Status "rejected"}}active{{end}}">Rejected</a>
+  </nav>
+
+  {{if .Registrations}}
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Username</th>
+        <th>Email</th>
+        <th>Submitted</th>
+        {{if eq .Status "pending"}}<th>Actions</th>{{end}}
+      </tr>
+    </thead>
+    <tbody id="registrations-table">
+      {{range .Registrations}}
+      {{template "admin_row.html" map "Reg" . "Status" $.Status "AdminToken" $.AdminToken "Error" ""}}
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty">No {{.Status}} registrations.</p>
+  {{end}}
+</div>
+{{end}}
