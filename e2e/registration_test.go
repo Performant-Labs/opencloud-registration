@@ -3,11 +3,11 @@
 //
 // Defaults match pl-opencloud-server/.env; override with env vars:
 //
-//	REGISTRATION_URL   https://register.opencloud.test
-//	OC_URL             https://cloud.opencloud.test
-//	ADMIN_TOKEN        localtest
-//	OC_ADMIN_USER      admin
-//	OC_ADMIN_PASSWORD  admin
+//	OC_REG_APP_BASE_URL https://register.opencloud.test
+//	OC_REG_OC_URL       https://cloud.opencloud.test
+//	OC_REG_ADMIN_TOKEN  localtest
+//	OC_REG_OC_ADMIN_USER admin
+//	OC_REG_OC_ADMIN_PASSWORD admin
 package e2e_test
 
 import (
@@ -26,11 +26,11 @@ import (
 // ── Config ────────────────────────────────────────────────────────────────────
 
 var (
-	regURL   = envOr("REGISTRATION_URL", "https://register.opencloud.test")
-	ocURL    = envOr("OC_URL", "https://cloud.opencloud.test")
-	regToken = envOr("ADMIN_TOKEN", "localtest")
-	ocUser   = envOr("OC_ADMIN_USER", "admin")
-	ocPass   = envOr("OC_ADMIN_PASSWORD", "admin")
+	regURL   = envOr("OC_REG_APP_BASE_URL", "https://register.opencloud.test")
+	ocURL    = envOr("OC_REG_OC_URL", "https://cloud.opencloud.test")
+	regToken = envOr("OC_REG_ADMIN_TOKEN", "localtest")
+	ocUser   = envOr("OC_REG_OC_ADMIN_USER", "admin")
+	ocPass   = envOr("OC_REG_OC_ADMIN_PASSWORD", "admin")
 )
 
 func envOr(key, fallback string) string {

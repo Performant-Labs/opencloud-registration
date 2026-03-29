@@ -85,17 +85,17 @@ The application utilizes `spf13/viper` for multi-layered configuration. Settings
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `OC_URL` | — | ✓ | Base URL for OpenCloud |
-| `OC_ADMIN_PASSWORD` | — | ✓ | Used for basic auth on Graph API |
-| `ADMIN_TOKEN` | — | ✓ | Dashboard token & encryption seed |
-| `OC_ADMIN_USER` | `admin` | | Graph API Account |
-| `OC_INSECURE` | `false` | | Skip TLS validation |
-| `REGISTRATION_MODE` | `open` | | `open` or `approval` |
-| `APP_BASE_URL` | `http://localhost:8080` | | Used in templates |
-| `DB_PATH` | `/data/registration.db` | | SQLite path |
-| `LISTEN_ADDR` | `:8080` | | Server listen port |
-| `CONFIG_PATH` | `/data/config.yml` | | (Legacy) Override Viper search |
-| `TEMPLATE_DIR` | — | | Override embedded templates |
+| `OC_REG_OC_URL` | — | ✓ | Base URL for OpenCloud |
+| `OC_REG_OC_ADMIN_PASSWORD` | — | ✓ | Used for basic auth on Graph API |
+| `OC_REG_ADMIN_TOKEN` | — | ✓ | Dashboard token & encryption seed |
+| `OC_REG_OC_ADMIN_USER` | `admin` | | Graph API Account |
+| `OC_REG_OC_INSECURE` | `false` | | Skip TLS validation |
+| `OC_REG_REGISTRATION_MODE` | `open` | | `open` or `approval` |
+| `OC_REG_APP_BASE_URL` | `http://localhost:8080` | | Used in templates |
+| `OC_REG_DB_PATH` | `/data/registration.db` | | SQLite path |
+| `OC_REG_LISTEN_ADDR` | `:8080` | | Server listen port |
+| `OC_REG_CONFIG_PATH` | `/data/registration.yaml` | | Override Viper file explicitly |
+| `OC_REG_TEMPLATE_DIR` | — | | Override embedded templates |
 
 ---
 

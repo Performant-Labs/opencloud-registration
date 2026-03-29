@@ -4,15 +4,15 @@ services:
     ports:
       - "8080:8080"
     environment:
-      LISTEN_ADDR: ":8080"
-      DB_PATH: "/data/registration.db"
-      REGISTRATION_MODE: "${REGISTRATION_MODE:-open}"
-      ADMIN_TOKEN: "${ADMIN_TOKEN:?ADMIN_TOKEN is required}"
-      OC_URL: "${OC_URL:?OC_URL is required}"
-      OC_ADMIN_USER: "${OC_ADMIN_USER:-admin}"
-      OC_ADMIN_PASSWORD: "${OC_ADMIN_PASSWORD:?OC_ADMIN_PASSWORD is required}"
-      OC_INSECURE: "${OC_INSECURE:-false}"
-      APP_BASE_URL: "${APP_BASE_URL:-http://localhost:8080}"
+      OC_REG_LISTEN_ADDR: ":8080"
+      OC_REG_DB_PATH: "/data/registration.db"
+      OC_REG_REGISTRATION_MODE: "${REGISTRATION_MODE:-open}"
+      OC_REG_ADMIN_TOKEN: "${ADMIN_TOKEN:?ADMIN_TOKEN is required}"
+      OC_REG_OC_URL: "${OC_URL:?OC_URL is required}"
+      OC_REG_OC_ADMIN_USER: "${OC_ADMIN_USER:-admin}"
+      OC_REG_OC_ADMIN_PASSWORD: "${OC_ADMIN_PASSWORD:?OC_ADMIN_PASSWORD is required}"
+      OC_REG_OC_INSECURE: "${OC_INSECURE:-false}"
+      OC_REG_APP_BASE_URL: "${APP_BASE_URL:-http://localhost:8080}"
     volumes:
       - registration-data:/data
     healthcheck:

@@ -50,7 +50,7 @@ Trying to register again with the same email or username shows an error — dupl
 
 ### Approval mode
 
-Set `REGISTRATION_MODE=approval` in `.env` and restart the registration container:
+Set `OC_REG_REGISTRATION_MODE=approval` in `.env` (or pass it directly) and restart the registration container:
 
 ```bash
 docker compose -f docker-compose.yml -f traefik/opencloud.yml \

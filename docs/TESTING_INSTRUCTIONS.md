@@ -8,13 +8,21 @@ This document explains how to run tests for `opencloud-registration`. The testin
 
 Before running tests, especially integration and end-to-end tests, you must ensure your test harness is correctly initialized. The test harness consists of the local OpenCloud development stack and your local environment.
 
-1. **Install Dependencies:** Ensure you have the required language tools installed (e.g. Go for backend tests) and run `go mod download` if starting fresh.
-2. **Start the OpenCloud Stack:** The E2E tests require a live, running instance of `pl-opencloud-server` to act as the backend test harness.
+1. **Verify Test Harness Health (Automated):** We provide a script `./scripts/run_e2e_tests.sh` that automatically performs 100% pre-flight readiness checks on your environment. Run it to see if your harness is already healthy:
+   ```bash
+   ./scripts/run_e2e_tests.sh
+   ```
+   If it starts running tests and passes the pre-flight checks, your test harness is properly set up and you can skip the following steps.
+
+2. **Install Dependencies (If needed):** If the tests complain about missing packages, ensure you have the required language tools installed (e.g. Go for backend tests) and run `go mod download` in the root of `opencloud-registration`.
+
+3. **Start the OpenCloud Stack (If needed):** If the pre-flight check indicated the stack or registration app is unreachable, start the live instance of `pl-opencloud-server`:
    ```bash
    cd ~/Sites/pl-opencloud-server
    ./occtl start
    ```
-3. **Verify Health (Automated):** We provide a script `./scripts/run_e2e_tests.sh` that automatically performs 100% pre-flight readiness checks on your environment, ensuring the target URLs (`cloud.opencloud.test` and `register.opencloud.test`) are reachable before proceeding.
+
+4. **Re-Verify Health:** Once the stack is running, re-run `./scripts/run_e2e_tests.sh` to ensure the E2E tests can now connect.
 
 ---
 

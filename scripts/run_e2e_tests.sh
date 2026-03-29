@@ -18,18 +18,19 @@ fi
 echo "✅ Dependencies (go, curl) installed."
 
 # 2. Container/Stack Check
-echo "🔍 Checking if OpenCloud stack is running..."
+echo "🔍 Checking if deep OpenCloud API stack is running..."
 
-# Wait up to 5 seconds to get a response from cloud.opencloud.test
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -k --connect-timeout 5 https://cloud.opencloud.test || echo "FAILED")
+# Wait up to 5 seconds to get a response from cloud.opencloud.test Graph API
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -k --connect-timeout 5 https://cloud.opencloud.test/graph/v1.0/drives || echo "FAILED")
 
-if [ "$HTTP_STATUS" = "FAILED" ] || [ "$HTTP_STATUS" = "000" ]; then
-    echo "❌ Error: Cannot connect to https://cloud.opencloud.test."
-    echo "Are you sure pl-opencloud-server is running?"
+if [ "$HTTP_STATUS" != "401" ]; then
+    echo "❌ Error: Cannot connect to OpenCloud Graph API."
+    echo "Expected HTTP 401, got $HTTP_STATUS."
+    echo "Are you sure pl-opencloud-server holds backend services running?"
     echo "Please run: cd ~/Sites/pl-opencloud-server && ./occtl start"
     exit 1
 fi
-echo "✅ https://cloud.opencloud.test is online (HTTP $HTTP_STATUS)."
+echo "✅ https://cloud.opencloud.test API backend is online (HTTP $HTTP_STATUS)."
 
 echo "🔍 Checking Registration App health..."
 REG_HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -k --connect-timeout 5 https://register.opencloud.test/health || echo "FAILED")

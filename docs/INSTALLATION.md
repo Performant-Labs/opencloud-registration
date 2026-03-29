@@ -96,17 +96,17 @@ These are used by the registration server binary itself (set in the container en
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `ADMIN_TOKEN` | — | ✓ | Token for the `/admin` dashboard (also used as the key seed for password encryption in approval mode) |
-| `OC_URL` | — | ✓ | OpenCloud base URL (e.g. `https://cloud.opencloud.test`) |
-| `OC_ADMIN_PASSWORD` | — | ✓ | OpenCloud admin password (used for Basic auth against the Graph API) |
-| `OC_ADMIN_USER` | `admin` | | OpenCloud admin username |
-| `OC_INSECURE` | `false` | | Skip TLS verification (`true` for self-signed certs) |
-| `REGISTRATION_MODE` | `open` | | `open` or `approval` |
-| `APP_BASE_URL` | `http://localhost:8080` | | Public URL of this app (used in templates) |
-| `DB_PATH` | `/data/registration.db` | | SQLite database path |
-| `LISTEN_ADDR` | `:8080` | | HTTP listen address |
-| `CONFIG_PATH` | `/data/config.yml` | | Optional YAML configuration file path |
-| `TEMPLATE_DIR` | — | | Path to directory containing custom `templates/` and `static/` files |
+| `OC_REG_ADMIN_TOKEN` | — | ✓ | Token for the `/admin` dashboard (also used as the key seed for password encryption in approval mode) |
+| `OC_REG_OC_URL` | — | ✓ | OpenCloud base URL (e.g. `https://cloud.opencloud.test`) |
+| `OC_REG_OC_ADMIN_PASSWORD` | — | ✓ | OpenCloud admin password (used for Basic auth against the Graph API) |
+| `OC_REG_OC_ADMIN_USER` | `admin` | | OpenCloud admin username |
+| `OC_REG_OC_INSECURE` | `false` | | Skip TLS verification (`true` for self-signed certs) |
+| `OC_REG_REGISTRATION_MODE` | `open` | | `open` or `approval` |
+| `OC_REG_APP_BASE_URL` | `http://localhost:8080` | | Public URL of this app (used in templates) |
+| `OC_REG_DB_PATH` | `/data/registration.db` | | SQLite database path |
+| `OC_REG_LISTEN_ADDR` | `:8080` | | HTTP listen address |
+| `OC_REG_CONFIG_PATH` | `/data/registration.yaml` | | Optional YAML configuration file path |
+| `OC_REG_TEMPLATE_DIR` | — | | Path to directory containing custom `templates/` and `static/` files |
 
 ### Compose add-on variables
 

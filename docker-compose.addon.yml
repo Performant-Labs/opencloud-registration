@@ -15,15 +15,15 @@ services:
     networks:
       opencloud-net:
     environment:
-      LISTEN_ADDR: ":8080"
-      DB_PATH: "/data/registration.db"
-      REGISTRATION_MODE: "${REGISTRATION_MODE:-open}"
-      ADMIN_TOKEN: "${ADMIN_TOKEN:?ADMIN_TOKEN is required}"
-      OC_URL: "https://${OC_DOMAIN:-cloud.opencloud.test}"
-      OC_ADMIN_USER: "${OC_ADMIN_USER:-admin}"
-      OC_ADMIN_PASSWORD: "${OC_ADMIN_PASSWORD:-admin}"
-      OC_INSECURE: "${INSECURE:-false}"
-      APP_BASE_URL: "https://${REGISTRATION_DOMAIN:-register.opencloud.test}"
+      OC_REG_LISTEN_ADDR: ":8080"
+      OC_REG_DB_PATH: "/data/registration.db"
+      OC_REG_REGISTRATION_MODE: "${REGISTRATION_MODE:-open}"
+      OC_REG_ADMIN_TOKEN: "${ADMIN_TOKEN:?ADMIN_TOKEN is required}"
+      OC_REG_OC_URL: "https://${OC_DOMAIN:-cloud.opencloud.test}"
+      OC_REG_OC_ADMIN_USER: "${OC_ADMIN_USER:-admin}"
+      OC_REG_OC_ADMIN_PASSWORD: "${OC_ADMIN_PASSWORD:-admin}"
+      OC_REG_OC_INSECURE: "${INSECURE:-false}"
+      OC_REG_APP_BASE_URL: "https://${REGISTRATION_DOMAIN:-register.opencloud.test}"
     volumes:
       - registration-data:/data
     labels:
