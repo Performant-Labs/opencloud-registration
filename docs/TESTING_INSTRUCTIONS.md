@@ -4,6 +4,21 @@ This document explains how to run tests for `opencloud-registration`. The testin
 
 ---
 
+## Test Harness Setup
+
+Before running tests, especially integration and end-to-end tests, you must ensure your test harness is correctly initialized. The test harness consists of the local OpenCloud development stack and your local environment.
+
+1. **Install Dependencies:** Ensure you have the required language tools installed (e.g. Go for backend tests) and run `go mod download` if starting fresh.
+2. **Start the OpenCloud Stack:** The E2E tests require a live, running instance of `pl-opencloud-server` to act as the backend test harness.
+   ```bash
+   cd ~/Sites/pl-opencloud-server
+   ./occtl start
+   ```
+3. **Verify Health:** Verify that the OpenCloud instance is healthy (`./occtl status`) before running the test suite.
+
+---
+
+
 ## Unit Tests
 
 Unit test files (`*_test.go`) exist for all internal packages: `config`, `db`, `opencloud`, and `handler`. 
@@ -46,10 +61,10 @@ go test ./e2e/ -v -timeout 60s
 By default, the tests use configuration that matches the stock `pl-opencloud-server/.env`. If your setup differs, you can override the target environment using the following variables:
 
 ```bash
-REGISTRATION_URL=https://register.example.com \
-OC_URL=https://cloud.example.com \
-ADMIN_TOKEN=your-token \
-OC_ADMIN_PASSWORD=your-password \
+OC_REG_APP_BASE_URL=https://register.example.com \
+OC_REG_OC_URL=https://cloud.example.com \
+OC_REG_ADMIN_TOKEN=your-token \
+OC_REG_OC_ADMIN_PASSWORD=your-password \
 go test ./e2e/ -v
 ```
 
@@ -57,11 +72,11 @@ go test ./e2e/ -v
 
 | Variable | Default Value |
 |---|---|
-| `REGISTRATION_URL` | `https://register.opencloud.test` |
-| `OC_URL` | `https://cloud.opencloud.test` |
-| `ADMIN_TOKEN` | `localtest` |
-| `OC_ADMIN_USER` | `admin` |
-| `OC_ADMIN_PASSWORD` | `admin` |
+| `OC_REG_APP_BASE_URL` | `https://register.opencloud.test` |
+| `OC_REG_OC_URL` | `https://cloud.opencloud.test` |
+| `OC_REG_ADMIN_TOKEN` | `localtest` |
+| `OC_REG_OC_ADMIN_USER` | `admin` |
+| `OC_REG_OC_ADMIN_PASSWORD` | `admin` |
 
 ### E2E Test Coverage
 
