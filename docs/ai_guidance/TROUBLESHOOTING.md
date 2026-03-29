@@ -794,6 +794,99 @@ The Playwright tests run against the production-like reverse proxy (e.g., `https
 
 ---
 
+## 23. Subtree Synchronization Failures (Missing Files)
+
+*Discovered in session cfb93ae7*
+
+### Symptom
+When a Git Subtree is pulled into a host repository (e.g., via `ai:sync` or `git subtree pull`), the operation completes successfully without error, but recently created or modified files are conspicuously missing from the subtree directory.
+
+### Root Cause
+Git subtrees inherently fetch their payloads from the remote upstream repository (e.g., GitHub), not your local file system. If a file was added or modified locally inside the primary source repository (e.g., `~/LocalDevelopment/ai_guidance`) but was never explicitly committed and pushed to the remote origin (`git push origin main`), the downstream host repository has no access to it. The subtree pull natively downloads exactly what was available on the server at the exact moment of the last upstream push.
+
+### Detection
+- `git status` inside the host repository shows an incomplete list of staged files after a fetch.
+- Running `git status` inside the upstream source repository reveals uncommitted tracking files or unpushed commits.
+
+### Solution
+1. Navigate directly to the original source repository (e.g., `~/LocalDevelopment/ai_guidance`).
+2. Commit and push the newest files up to the server:
+   ```bash
+   git add .
+   git commit -m "Publish new synchronization rules"
+   git push origin main
+   ```
+3. Return to your host repository and rerun the subtree fetch command (e.g., `ai:sync`).
+
+### Prevention
+- Adopt a strict sequence: when subtrees are present, you must actively verify and push the upstream subtree master repository before you attempt to systematically sync downstream host projects.
+
+---
+
+## 24. AI Agent Hung on `git` Commands (Git Pager)
+
+*Discovered in session cfb93ae7*
+
+### Symptom
+An AI agent attempts to run a terminal command like `git log`, `git show`, or `git diff` and appears to hang indefinitely. It never processes the output and requires you to manually intervene and cancel the running process. 
+
+### Root Cause
+By default, Git pipes any output stream exceeding one screen height through a terminal pager (typically `less`). The pager inherently waits for a human user to physically press the `q` key to gracefully exit. Because the AI is executing non-interactively, it cannot send the `q` keystroke, causing the agent to hang permanently.
+
+### Detection
+- The agent executes a Git inspection command.
+- The terminal execution timer ticks indefinitely (e.g. 1m+) without resolving.
+- `ps aux | grep less` may show an abandoned pager instance process.
+
+### Solution
+1. Cancel the agent's hung process. 
+2. Explicitly instruct the agent to run the command with the `--no-pager` flag.
+
+### Prevention
+- AIs must **always explicitly disable the pager** when running stream commands in this environment:
+  ```bash
+  # ❌ WRONG — hangs the AI indefinitely inside 'less'
+  git log -1
+
+  # ✅ CORRECT — safely bypasses the pager and returns immediately
+  git --no-pager log -1
+  ```
+
+## 25. Multi-Repo Scripts Appearing Stuck (Execution Duration)
+
+*Discovered in session cfb93ae7*
+
+### Symptom
+An AI agent executes a bash `for` loop that iterates over multiple repositories (e.g., synchronizing the AI subtree across 7 local projects). The command execution timer ticks for 30-45 seconds, making the system look completely frozen, identical to a `git log` pager hang.
+
+### Root Cause
+Operations that hit network borders sequentially—like initiating 7 distinct SSH handshakes to `git@github.com` via `git fetch`—take approximately 4-6 seconds per repository. A 7-repository loop legitimately takes ~35 seconds to physically complete. The terminal is perfectly healthy; it is simply blocking while completing the heavy IO operations.
+
+### Detection
+- Inspect the exact command string. If it contains a `for repo in "${REPOS[@]}"; do ... git fetch ... done` loop, it is systematically iterating.
+- Wait at least 60 seconds before assuming the loop is structurally broken. 
+
+### Solution
+Allow the agent's command to peacefully finish its network queue. If you accidentally execute `Cancel` on a long-running sync loop, simply re-run the loop.
+
+### Prevention / The Sync Script
+If the automated sync loop is ever disrupted, here is the official recovery snippet to cleanly rebuild the staged AI constraints across all host projects identically:
+
+```bash
+REPOS=( ~/Sites/opencloud-voting ~/Sites/opencloud-registration ~/Sites/pl-opencloud-server ~/Sites/pl-opensocial ~/Sites/pl-opensocial-test ~/Sites/pl-drupalorg ~/Projects/AlmondTTS )
+for repo in "${REPOS[@]}"; do
+  cd "$repo"
+  # Safely wipe uncommitted staged ghosts
+  git rm -rf --cached docs/ai_guidance/ || true
+  rm -rf docs/ai_guidance/
+  # Refresh from upstream
+  git fetch git@github.com:Performant-Labs/ai_guidance.git main
+  git read-tree --prefix=docs/ai_guidance/ -u FETCH_HEAD
+done
+```
+
+---
+
 ## Master Cleanup Script
 
 The `scripts/kill-zombies.sh` script handles process cleanup. Run it:
@@ -849,3 +942,8 @@ When something appears stuck, check in this order:
 
 ### DDEV CLI
 19. **Using wrong DDEV flags?** → `ddev stop` has no `-y`, use `ddev delete --omit-snapshot -y`
+
+### Git Environments
+20. **Subtree fetch missing recent files?** → Verify the source repository has been explicitly committed and pushed to the remote origin.
+21. **Agent hung on `git log`?** → The agent forgot to bypass the terminal pager. Cancel it and tell it to use `git --no-pager log`.
+22. **Multi-repo loop appears hung?** → Sequential SSH handshakes naturally take ~35 seconds. Wait 60s before intervening.
