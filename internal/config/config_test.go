@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -112,6 +113,68 @@ func TestLoad_InvalidMode(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for invalid mode")
+	}
+}
+
+func TestLoad_ConfigFile(t *testing.T) {
+	validEnv(t)
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yml")
+	
+	yamlContent := `
+listen_addr: ":1234"
+registration_mode: "approval"
+template_dir: "/tmp/tpls"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("CONFIG_PATH", configPath)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.ListenAddr != ":1234" {
+		t.Errorf("expected :1234, got %q", cfg.ListenAddr)
+	}
+	if cfg.RegistrationMode != "approval" {
+		t.Errorf("expected approval, got %q", cfg.RegistrationMode)
+	}
+	if cfg.TemplateDir != "/tmp/tpls" {
+		t.Errorf("expected /tmp/tpls, got %q", cfg.TemplateDir)
+	}
+
+	// Test environment override
+	t.Setenv("LISTEN_ADDR", ":5678")
+	cfg2, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg2.ListenAddr != ":5678" {
+		t.Errorf("env should override yaml, expected :5678, got %q", cfg2.ListenAddr)
+	}
+}
+
+func TestObfuscate(t *testing.T) {
+	cfg := &Config{
+		AdminToken:      "super_secret_token",
+		OCAdminPassword: "super_secret_password",
+		ListenAddr:      ":8080",
+	}
+
+	obs := cfg.Obfuscate()
+
+	if obs["AdminToken"] != "***" {
+		t.Errorf("AdminToken not obfuscated: %v", obs["AdminToken"])
+	}
+	if obs["OCAdminPassword"] != "***" {
+		t.Errorf("OCAdminPassword not obfuscated: %v", obs["OCAdminPassword"])
+	}
+	if obs["ListenAddr"] != ":8080" {
+		t.Errorf("ListenAddr should not be obfuscated: %v", obs["ListenAddr"])
 	}
 }
 

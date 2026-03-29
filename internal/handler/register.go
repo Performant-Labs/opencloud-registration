@@ -1,9 +1,9 @@
 package handler
 
 import (
-	"context"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"net/mail"
 	"regexp"
@@ -21,10 +21,10 @@ type RegisterHandler struct {
 	cfg      *config.Config
 	db       *db.DB
 	ocClient *opencloud.Client
-	tmpl     *template.Template
+	tmpl     map[string]*template.Template
 }
 
-func NewRegisterHandler(cfg *config.Config, database *db.DB, oc *opencloud.Client, tmpl *template.Template) *RegisterHandler {
+func NewRegisterHandler(cfg *config.Config, database *db.DB, oc *opencloud.Client, tmpl map[string]*template.Template) *RegisterHandler {
 	return &RegisterHandler{cfg: cfg, db: database, ocClient: oc, tmpl: tmpl}
 }
 
@@ -37,7 +37,7 @@ type registerFormData struct {
 }
 
 func (h *RegisterHandler) ShowForm(w http.ResponseWriter, r *http.Request) {
-	h.renderForm(w, registerFormData{AppBaseURL: h.cfg.AppBaseURL})
+	h.renderForm(w, r, registerFormData{AppBaseURL: h.cfg.AppBaseURL})
 }
 
 func (h *RegisterHandler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
@@ -61,42 +61,43 @@ func (h *RegisterHandler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 
 	if errMsg := validate(displayName, username, email, password, passwordConfirm); errMsg != "" {
 		formData.Error = errMsg
-		h.renderForm(w, formData)
+		h.renderForm(w, r, formData)
 		return
 	}
 
-	// Check uniqueness
-	if existing, _ := h.db.ListRegistrationsByStatus("pending"); existing != nil {
-		for _, reg := range existing {
-			if reg.Username == username {
-				formData.Error = "username is already taken"
-				h.renderForm(w, formData)
-				return
-			}
-			if reg.Email == email {
-				formData.Error = "email is already registered"
-				h.renderForm(w, formData)
-				return
-			}
-		}
+	// Check uniqueness across all existing registrations
+	emailTaken, usernameTaken, _ := h.db.ExistsByEmailOrUsername(r.Context(), email, username)
+	if usernameTaken {
+		formData.Error = "username is already taken"
+		h.renderForm(w, r, formData)
+		return
+	}
+	if emailTaken {
+		formData.Error = "email is already registered"
+		h.renderForm(w, r, formData)
+		return
 	}
 
 	id := uuid.New().String()
 
 	if h.cfg.RegistrationMode == "open" {
-		err := h.ocClient.CreateUser(context.Background(), opencloud.CreateUserRequest{
+		err := h.ocClient.CreateUser(r.Context(), opencloud.CreateUserRequest{
 			DisplayName:              displayName,
 			Mail:                     email,
 			OnPremisesSamAccountName: username,
 			PasswordProfile:          opencloud.PasswordProfile{Password: password},
 		})
 		if err != nil {
-			_ = h.db.AppendAuditLog(id, "oc_failed", err.Error())
-			formData.Error = fmt.Sprintf("Could not create account: %v", err)
-			h.renderForm(w, formData)
+			_ = h.db.AppendAuditLog(r.Context(), id, "oc_failed", err.Error())
+			log.Printf("opencloud user creation failed: %v", err)
+			formData.Error = "Could not create account, please try again"
+			h.renderForm(w, r, formData)
 			return
 		}
-		_ = h.db.AppendAuditLog(id, "oc_created", "")
+		_ = h.db.CreateRegistration(r.Context(), &db.Registration{
+			ID: id, DisplayName: displayName, Username: username, Email: email, Status: "approved",
+		})
+		_ = h.db.AppendAuditLog(r.Context(), id, "oc_created", "")
 		htmxRedirect(w, r, "/success")
 		return
 	}
@@ -104,8 +105,9 @@ func (h *RegisterHandler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 	// Approval mode — encrypt password and store
 	encrypted, err := encryptPassword(password, h.cfg.AdminToken)
 	if err != nil {
+		log.Printf("password encryption failed: %v", err)
 		formData.Error = "internal error, please try again"
-		h.renderForm(w, formData)
+		h.renderForm(w, r, formData)
 		return
 	}
 
@@ -117,12 +119,13 @@ func (h *RegisterHandler) HandleSubmit(w http.ResponseWriter, r *http.Request) {
 		Password:    encrypted,
 		Status:      "pending",
 	}
-	if err := h.db.CreateRegistration(reg); err != nil {
+	if err := h.db.CreateRegistration(r.Context(), reg); err != nil {
+		log.Printf("save pending registration failed: %v", err)
 		formData.Error = "Could not save registration, please try again"
-		h.renderForm(w, formData)
+		h.renderForm(w, r, formData)
 		return
 	}
-	_ = h.db.AppendAuditLog(id, "submitted", "")
+	_ = h.db.AppendAuditLog(r.Context(), id, "submitted", "")
 	htmxRedirect(w, r, "/pending")
 }
 
@@ -156,16 +159,23 @@ func (h *RegisterHandler) ValidateField(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *RegisterHandler) ShowSuccess(w http.ResponseWriter, r *http.Request) {
-	_ = h.tmpl.ExecuteTemplate(w, "success.html", map[string]string{"AppBaseURL": h.cfg.AppBaseURL})
+	_ = h.tmpl["success.html"].ExecuteTemplate(w, "success.html", map[string]string{
+		"OCUrl":    h.cfg.OCUrl,
+		"SigninURL": h.cfg.OCUrl + "/signin/v1/identifier",
+	})
 }
 
 func (h *RegisterHandler) ShowPending(w http.ResponseWriter, r *http.Request) {
-	_ = h.tmpl.ExecuteTemplate(w, "pending.html", nil)
+	_ = h.tmpl["pending.html"].ExecuteTemplate(w, "pending.html", nil)
 }
 
-func (h *RegisterHandler) renderForm(w http.ResponseWriter, data registerFormData) {
+func (h *RegisterHandler) renderForm(w http.ResponseWriter, r *http.Request, data registerFormData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = h.tmpl.ExecuteTemplate(w, "register.html", data)
+	if r.Header.Get("HX-Request") == "true" {
+		_ = h.tmpl["register.html"].ExecuteTemplate(w, "form-fragment", data)
+		return
+	}
+	_ = h.tmpl["register.html"].ExecuteTemplate(w, "register.html", data)
 }
 
 // htmxRedirect sends an HX-Redirect for htmx requests and a normal 303 otherwise.

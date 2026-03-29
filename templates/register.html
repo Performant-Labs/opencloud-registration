@@ -2,60 +2,64 @@
 
 {{define "title"}}Create Account — OpenCloud{{end}}
 
+{{define "form-fragment"}}
+<div id="form-container">
+  <form hx-post="/register"
+        hx-target="#form-container"
+        hx-swap="outerHTML">
+
+    <div class="field">
+      <label for="display_name">Display name</label>
+      <input id="display_name" name="display_name" type="text"
+             value="{{.DisplayName}}" required autocomplete="name">
+    </div>
+
+    <div class="field">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text"
+             value="{{.Username}}" required autocomplete="username"
+             hx-post="/register/validate/username"
+             hx-trigger="blur"
+             hx-target="next .field-error"
+             hx-include="[name='username']">
+      <span class="field-error"></span>
+    </div>
+
+    <div class="field">
+      <label for="email">Email address</label>
+      <input id="email" name="email" type="email"
+             value="{{.Email}}" required autocomplete="email"
+             hx-post="/register/validate/email"
+             hx-trigger="blur"
+             hx-target="next .field-error"
+             hx-include="[name='email']">
+      <span class="field-error"></span>
+    </div>
+
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password"
+             required autocomplete="new-password" minlength="8">
+    </div>
+
+    <div class="field">
+      <label for="password_confirm">Confirm password</label>
+      <input id="password_confirm" name="password_confirm" type="password"
+             required autocomplete="new-password" minlength="8">
+    </div>
+
+    {{if .Error}}
+    <div class="error-banner" role="alert">{{.Error}}</div>
+    {{end}}
+
+    <button type="submit" class="btn-primary">Create account</button>
+  </form>
+</div>
+{{end}}
+
 {{define "content"}}
 <div class="card">
   <h1>Create an account</h1>
-  <div id="form-container">
-    <form hx-post="/register"
-          hx-target="#form-container"
-          hx-swap="outerHTML">
-
-      <div class="field">
-        <label for="display_name">Display name</label>
-        <input id="display_name" name="display_name" type="text"
-               value="{{.DisplayName}}" required autocomplete="name">
-      </div>
-
-      <div class="field">
-        <label for="username">Username</label>
-        <input id="username" name="username" type="text"
-               value="{{.Username}}" required autocomplete="username"
-               hx-post="/register/validate/username"
-               hx-trigger="blur"
-               hx-target="next .field-error"
-               hx-include="[name='username']">
-        <span class="field-error"></span>
-      </div>
-
-      <div class="field">
-        <label for="email">Email address</label>
-        <input id="email" name="email" type="email"
-               value="{{.Email}}" required autocomplete="email"
-               hx-post="/register/validate/email"
-               hx-trigger="blur"
-               hx-target="next .field-error"
-               hx-include="[name='email']">
-        <span class="field-error"></span>
-      </div>
-
-      <div class="field">
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password"
-               required autocomplete="new-password" minlength="8">
-      </div>
-
-      <div class="field">
-        <label for="password_confirm">Confirm password</label>
-        <input id="password_confirm" name="password_confirm" type="password"
-               required autocomplete="new-password" minlength="8">
-      </div>
-
-      {{if .Error}}
-      <div class="error-banner" role="alert">{{.Error}}</div>
-      {{end}}
-
-      <button type="submit" class="btn-primary">Create account</button>
-    </form>
-  </div>
+  {{template "form-fragment" .}}
 </div>
 {{end}}

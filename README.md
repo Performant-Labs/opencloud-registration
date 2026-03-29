@@ -2,223 +2,143 @@
 
 Self-registration portal for [OpenCloud](https://opencloud.eu). Users fill out a form and accounts are created via the OpenCloud Graph API. Supports **open** (instant) and **approval** (admin-gated) modes.
 
-Built with Go + [htmx](https://htmx.org), SQLite, and a single Docker container that plugs into any `pl-opencloud-server` stack via Traefik.
+Built with Go 1.25 + [htmx 2.0.4](https://htmx.org), SQLite (WAL mode), and a single Docker container that plugs into any [opencloud-compose](https://github.com/opencloud-eu/opencloud-compose) stack via Traefik.
 
 ---
 
 ## Features
 
-- Registration form with per-field validation (display name, username, email, password)
-- **Open mode** — account created immediately on submission
-- **Approval mode** — submissions queued in SQLite; admin approves or rejects via a dashboard
-- Admin dashboard at `/admin` protected by a static token
-- Passwords encrypted at rest (AES-256-GCM) in approval mode
-- Audit log of all registration events
-- Single self-contained binary with embedded templates and CSS
-- Docker Compose add-on — joins `opencloud-net` and registers itself with Traefik
+- Registration form with per-field inline validation on blur (username, email) via htmx
+- Server-side validation of all fields (display name, username, email, password, password confirmation)
+- **Open mode** — account created immediately via the Graph API; duplicate usernames and emails are rejected before the API call
+- **Approval mode** — submissions queued in SQLite; admin approves or rejects via an htmx-powered dashboard with inline row updates
+- Admin dashboard at `/admin` protected by a static token (`?token=` query param or `Authorization: Bearer` header)
+- Passwords encrypted at rest with AES-256-GCM (key derived via PBKDF2 from `ADMIN_TOKEN`) in approval mode
+- Full audit log of all registration events (submitted, approved, rejected, OC API errors)
+- Single self-contained binary with embedded templates and CSS — no external assets at runtime
+- Docker Compose add-on — joins `opencloud-net` and self-registers with Traefik
 
 ---
 
 ## Requirements
 
-- Docker + Docker Compose
-- A running [pl-opencloud-server](https://github.com/opencloud-eu/opencloud-compose) stack
-- The `opencloud-net` Docker network (created by pl-opencloud-server)
+- Docker + Docker Compose (or [OrbStack](https://orbstack.dev))
+- A running [opencloud-compose](https://github.com/opencloud-eu/opencloud-compose) stack (formerly `pl-opencloud-server`)
+- Go 1.25+ (only needed to build locally or run tests)
 
 ---
 
-## Quick start (local dev)
+## Installation & Deployment
 
-### 1. Add env vars to pl-opencloud-server
+Please refer to the [installation guide](docs/INSTALLATION.md) for detailed instructions on:
+- Setting up the app alongside `pl-opencloud-server`
+- Running the app in standalone mode
+- Full environment variable reference
 
-Open `~/Sites/pl-opencloud-server/.env` and add:
+---
 
-```dotenv
-ADMIN_TOKEN=localtest
-REGISTRATION_DOMAIN=register.opencloud.test
-REGISTRATION_MODE=open
-```
+## Usage
 
-### 2. Add the hostname to `/etc/hosts`
+### Open mode (default)
 
-```bash
-sudo sh -c 'echo "127.0.0.1  register.opencloud.test" >> /etc/hosts'
-```
+1. Go to **https://register.opencloud.test** — accept the self-signed cert warning.
+2. Fill in display name, username, email, and password. Username and email are validated inline on blur.
+3. Submit — the account is created immediately and you land on the success page.
+4. Click **Sign in to OpenCloud** to go directly to the OpenCloud sign-in page.
 
-### 3. Start the stack
+Trying to register again with the same email or username shows an error — duplicates are caught in the local database *before* calling the Graph API.
 
-From `~/Sites/pl-opencloud-server/` using `occtl`:
+### Approval mode
 
-```bash
-./occtl start
-```
-
-Or manually:
+Set `REGISTRATION_MODE=approval` in `.env` and restart the registration container:
 
 ```bash
-docker compose \
-  -f docker-compose.yml \
-  -f traefik/opencloud.yml \
+docker compose -f docker-compose.yml -f traefik/opencloud.yml \
   -f ../opencloud-registration/docker-compose.addon.yml \
-  up -d --build
+  up -d registration
 ```
 
-Wait ~30 seconds, then check the registration container is healthy:
+1. Users register and see a "Registration submitted" page with a pending icon — no account is created yet.
+2. Open the admin dashboard: **https://register.opencloud.test/admin?token=your-token**
+3. Approve a submission — the password is decrypted, the account is created in OpenCloud via the Graph API, and the row updates inline via htmx.
+4. Reject a submission — no account is created; the row updates inline.
 
-```bash
-./occtl status
-```
+The admin dashboard has tab navigation for filtering by status: **Pending**, **Approved**, **Rejected**.
 
 ---
 
-## Testing the registration flow
-
-### Open mode (instant account creation)
-
-1. Open **https://register.opencloud.test** — accept the self-signed cert warning.
-2. Try submitting a blank form — you should see "display name is required".
-3. Try a bad username like `AB` (too short, uppercase) — you should see the format error.
-4. Try mismatched passwords — you should see "passwords do not match".
-5. Fill in valid details and submit:
-   - Display name: `Test User`
-   - Username: `testuser`
-   - Email: `test@example.com`
-   - Password: `TestPass123`
-6. You should land on the `/success` page.
-
-**Verify the account was created:**
-
-```bash
-curl -sk -u admin:admin \
-  https://cloud.opencloud.test/graph/v1.0/users \
-  | python3 -m json.tool | grep -A5 testuser
-```
-
-Or go to **https://cloud.opencloud.test** → admin menu → **User Management** and look for `testuser`.
-
-**Log in as the new user:**
-
-Go to **https://cloud.opencloud.test** and sign in with `testuser` / `TestPass123`.
-
----
-
-### Approval mode (admin-gated)
-
-1. In `pl-opencloud-server/.env`, change:
-   ```dotenv
-   REGISTRATION_MODE=approval
-   ```
-
-2. Restart the registration container:
-   ```bash
-   ./occtl restart
-   # or just the registration service:
-   docker compose ... up -d registration
-   ```
-
-3. Register a new user (e.g. username `pendinguser`) — you should land on `/pending`. No account is created yet.
-
-4. Open the admin dashboard:
-   **https://register.opencloud.test/admin?token=localtest**
-
-5. You should see `pendinguser` in the pending list.
-
-6. Click **Approve** — the row updates and the account is created in OpenCloud. Verify with the `curl` command above.
-
-7. Register a second user and click **Reject** — the row disappears and no account is created.
-
----
-
-## Environment variables
-
-| Variable | Default | Required | Description |
-|---|---|---|---|
-| `OC_URL` | — | ✓ | OpenCloud base URL |
-| `OC_ADMIN_PASSWORD` | — | ✓ | OpenCloud admin password |
-| `ADMIN_TOKEN` | — | ✓ | Token to access the `/admin` dashboard |
-| `OC_ADMIN_USER` | `admin` | | OpenCloud admin username |
-| `OC_INSECURE` | `false` | | Skip TLS verification (set `true` for self-signed certs) |
-| `REGISTRATION_MODE` | `open` | | `open` or `approval` |
-| `APP_BASE_URL` | `http://localhost:8080` | | Public URL of this app (used in success page link) |
-| `DB_PATH` | `/data/registration.db` | | SQLite database path |
-| `LISTEN_ADDR` | `:8080` | | HTTP listen address |
-
-See `.env.example` for a full template.
-
----
-
-## Deployment
-
-### As a Docker Compose add-on (recommended)
-
-Add to `pl-opencloud-server/.env`:
-
-```dotenv
-ADMIN_TOKEN=your-secret-token
-REGISTRATION_DOMAIN=register.yourdomain.com
-REGISTRATION_MODE=open          # or: approval
-OC_ADMIN_PASSWORD=your-admin-password
-```
-
-Then include `docker-compose.addon.yml` in your compose command or `COMPOSE_FILE`:
-
-```dotenv
-COMPOSE_FILE=docker-compose.yml:traefik/opencloud.yml:../opencloud-registration/docker-compose.addon.yml
-```
-
-Or pass it directly:
-
-```bash
-docker compose \
-  -f docker-compose.yml \
-  -f traefik/opencloud.yml \
-  -f ../opencloud-registration/docker-compose.addon.yml \
-  up -d --build
-```
-
-### Standalone
-
-Copy `.env.example` to `.env`, fill in values, then:
-
-```bash
-docker compose up -d --build
-```
-
-The app will be available at `http://localhost:8080`.
-
----
 
 ## Development
 
-### Run locally (without Docker)
+### Run locally without Docker
 
 ```bash
 cp .env.example .env
-# edit .env with your values
-
+# edit .env
 source .env
 go run ./cmd/server
 ```
 
-### Run tests
+### Testing
 
-```bash
-go test ./...
-```
+Please refer to the [Testing Instructions](docs/TESTING_INSTRUCTIONS.md) for details on running unit tests and the live integration test suite.
 
 ### Project structure
 
 ```
-├── assets.go                    # embeds templates/ and static/ into the binary
-├── cmd/server/main.go           # entry point
+├── .env.example                     # template with all env vars and comments
+├── .gitignore
+├── assets.go                        # //go:embed templates static
+├── cmd/server/main.go               # entry point: wires config, db, handlers, routes
 ├── internal/
-│   ├── config/                  # env var loading and validation
-│   ├── db/                      # SQLite layer (registrations + audit_log)
-│   ├── opencloud/               # Graph API client
-│   └── handler/                 # HTTP handlers, crypto, middleware
-├── templates/                   # htmx HTML templates
-├── static/style.css             # minimal CSS
-├── Dockerfile                   # multi-stage build
-├── docker-compose.yml           # standalone dev
-└── docker-compose.addon.yml     # pl-opencloud-server add-on
+│   ├── config/
+│   │   ├── config.go                # env var loading + validation
+│   │   └── config_test.go
+│   ├── db/
+│   │   ├── db.go                    # SQLite CRUD (WAL mode, foreign keys)
+│   │   ├── schema.go                # DDL: registrations + audit_log tables
+│   │   └── db_test.go
+│   ├── opencloud/
+│   │   ├── client.go                # POST /graph/v1.0/users (Basic auth)
+│   │   └── client_test.go
+│   └── handler/
+│       ├── crypto.go                # AES-256-GCM password encrypt/decrypt (PBKDF2 key)
+│       ├── middleware.go            # AdminAuth (Bearer header or ?token= query param)
+│       ├── register.go              # GET /, POST /register, POST /register/validate/{field}
+│       ├── admin.go                 # GET /admin, POST /admin/approve/{id}, /admin/reject/{id}
+│       └── handler_test.go
+├── templates/
+│   ├── base.html                    # shared layout (htmx 2.0.4 from unpkg CDN)
+│   ├── register.html                # form with htmx blur validation and fragment rendering
+│   ├── success.html                 # "Sign in to OpenCloud" link → /signin/v1/identifier
+│   ├── pending.html                 # approval-mode confirmation
+│   ├── admin.html                   # dashboard with status tab navigation
+│   └── admin_row.html               # htmx row fragment for approve/reject inline updates
+├── static/style.css                 # CSS (embedded at build time)
+├── e2e/
+│   └── registration_test.go         # integration tests against the live stack
+├── go.mod                           # module: github.com/Performant-Labs/opencloud-registration
+├── go.sum
+├── docs/                            # documentation
+│   ├── INSTALLATION.md              # installation and deployment details
+│   ├── PLAN.md                      # implementation plan / design doc
+│   └── TESTING_INSTRUCTIONS.md      # unit and integration testing guide
+├── Dockerfile                       # multi-stage: golang:1.25-bookworm → debian:bookworm-slim
+├── docker-compose.yml               # standalone dev (port 8080, uses OC_INSECURE directly)
+└── docker-compose.addon.yml         # pl-opencloud-server add-on (opencloud-net + Traefik, maps INSECURE → OC_INSECURE)
 ```
+
+### HTTP routes
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/` | — | Registration form |
+| `POST` | `/register` | — | Submit registration (htmx or standard POST) |
+| `POST` | `/register/validate/{field}` | — | Per-field blur validation (`username`, `email`) |
+| `GET` | `/success` | — | "Account created" confirmation with sign-in link |
+| `GET` | `/pending` | — | "Awaiting approval" confirmation |
+| `GET` | `/admin` | token | List registrations (filterable by `?status=pending\|approved\|rejected`) |
+| `POST` | `/admin/approve/{id}` | token | Approve → decrypt password → create user in OpenCloud |
+| `POST` | `/admin/reject/{id}` | token | Reject registration |
+| `GET` | `/health` | — | `{"status":"ok"}` |
+| `GET` | `/static/*` | — | Embedded CSS |

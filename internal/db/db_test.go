@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -11,7 +12,7 @@ func openMemDB(t *testing.T) *DB {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := d.Migrate(); err != nil {
+	if err := d.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	t.Cleanup(func() { d.Close() })
@@ -31,7 +32,7 @@ func newReg(id, username, email string) *Registration {
 
 func TestMigrate_Idempotent(t *testing.T) {
 	d := openMemDB(t)
-	if err := d.Migrate(); err != nil {
+	if err := d.Migrate(context.Background()); err != nil {
 		t.Fatalf("second Migrate failed: %v", err)
 	}
 }
@@ -40,11 +41,11 @@ func TestCreateAndGetRegistration(t *testing.T) {
 	d := openMemDB(t)
 
 	reg := newReg("id-1", "alice", "alice@example.com")
-	if err := d.CreateRegistration(reg); err != nil {
+	if err := d.CreateRegistration(context.Background(), reg); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
-	got, err := d.GetRegistration("id-1")
+	got, err := d.GetRegistration(context.Background(), "id-1")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -63,13 +64,13 @@ func TestListRegistrationsByStatus(t *testing.T) {
 	d := openMemDB(t)
 
 	for i, u := range []string{"bob", "carol", "dave"} {
-		_ = d.CreateRegistration(newReg("id-"+u, u, u+"-"+string(rune('a'+i))+"@example.com"))
+		_ = d.CreateRegistration(context.Background(), newReg("id-"+u, u, u+"-"+string(rune('a'+i))+"@example.com"))
 	}
 	approved := newReg("id-eve", "eve", "eve@example.com")
 	approved.Status = "approved"
-	_ = d.CreateRegistration(approved)
+	_ = d.CreateRegistration(context.Background(), approved)
 
-	pending, err := d.ListRegistrationsByStatus("pending")
+	pending, err := d.ListRegistrationsByStatus(context.Background(), "pending")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -77,7 +78,7 @@ func TestListRegistrationsByStatus(t *testing.T) {
 		t.Errorf("pending count: got %d, want 3", len(pending))
 	}
 
-	approvedList, _ := d.ListRegistrationsByStatus("approved")
+	approvedList, _ := d.ListRegistrationsByStatus(context.Background(), "approved")
 	if len(approvedList) != 1 {
 		t.Errorf("approved count: got %d, want 1", len(approvedList))
 	}
@@ -85,13 +86,13 @@ func TestListRegistrationsByStatus(t *testing.T) {
 
 func TestUpdateStatus(t *testing.T) {
 	d := openMemDB(t)
-	_ = d.CreateRegistration(newReg("id-1", "frank", "frank@example.com"))
+	_ = d.CreateRegistration(context.Background(), newReg("id-1", "frank", "frank@example.com"))
 
-	if err := d.UpdateStatus("id-1", "approved", "admin"); err != nil {
+	if err := d.UpdateStatus(context.Background(), "id-1", "approved", "admin"); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 
-	got, _ := d.GetRegistration("id-1")
+	got, _ := d.GetRegistration(context.Background(), "id-1")
 	if got.Status != "approved" {
 		t.Errorf("status: got %q", got.Status)
 	}
@@ -105,9 +106,9 @@ func TestUpdateStatus(t *testing.T) {
 
 func TestDuplicateUsername(t *testing.T) {
 	d := openMemDB(t)
-	_ = d.CreateRegistration(newReg("id-1", "grace", "grace@example.com"))
+	_ = d.CreateRegistration(context.Background(), newReg("id-1", "grace", "grace@example.com"))
 
-	err := d.CreateRegistration(newReg("id-2", "grace", "other@example.com"))
+	err := d.CreateRegistration(context.Background(), newReg("id-2", "grace", "other@example.com"))
 	if err == nil {
 		t.Fatal("expected UNIQUE constraint error")
 	}
@@ -118,9 +119,9 @@ func TestDuplicateUsername(t *testing.T) {
 
 func TestDuplicateEmail(t *testing.T) {
 	d := openMemDB(t)
-	_ = d.CreateRegistration(newReg("id-1", "henry", "shared@example.com"))
+	_ = d.CreateRegistration(context.Background(), newReg("id-1", "henry", "shared@example.com"))
 
-	err := d.CreateRegistration(newReg("id-2", "irene", "shared@example.com"))
+	err := d.CreateRegistration(context.Background(), newReg("id-2", "irene", "shared@example.com"))
 	if err == nil {
 		t.Fatal("expected UNIQUE constraint error")
 	}
@@ -128,9 +129,9 @@ func TestDuplicateEmail(t *testing.T) {
 
 func TestAuditLog(t *testing.T) {
 	d := openMemDB(t)
-	_ = d.CreateRegistration(newReg("id-1", "judy", "judy@example.com"))
+	_ = d.CreateRegistration(context.Background(), newReg("id-1", "judy", "judy@example.com"))
 
-	if err := d.AppendAuditLog("id-1", "submitted", ""); err != nil {
+	if err := d.AppendAuditLog(context.Background(), "id-1", "submitted", ""); err != nil {
 		t.Fatalf("audit log: %v", err)
 	}
 

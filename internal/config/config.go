@@ -4,33 +4,78 @@ import (
 	"errors"
 	"os"
 	"strconv"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	ListenAddr       string
-	DBPath           string
-	RegistrationMode string // "open" | "approval"
-	AdminToken       string
-	OCUrl            string
-	OCAdminUser      string
-	OCAdminPassword  string
-	OCInsecure       bool
-	AppBaseURL       string
+	ListenAddr       string `yaml:"listen_addr"`
+	DBPath           string `yaml:"db_path"`
+	RegistrationMode string `yaml:"registration_mode"` // "open" | "approval"
+	AdminToken       string `yaml:"admin_token"`
+	OCUrl            string `yaml:"oc_url"`
+	OCAdminUser      string `yaml:"oc_admin_user"`
+	OCAdminPassword  string `yaml:"oc_admin_password"`
+	OCInsecure       bool   `yaml:"oc_insecure"`
+	AppBaseURL       string `yaml:"app_base_url"`
+	TemplateDir      string `yaml:"template_dir"`
 }
 
 func Load() (*Config, error) {
+	// 1. Set Defaults
 	cfg := &Config{
-		ListenAddr:       getEnv("LISTEN_ADDR", ":8080"),
-		DBPath:           getEnv("DB_PATH", "/data/registration.db"),
-		RegistrationMode: getEnv("REGISTRATION_MODE", "open"),
-		AdminToken:       os.Getenv("ADMIN_TOKEN"),
-		OCUrl:            os.Getenv("OC_URL"),
-		OCAdminUser:      getEnv("OC_ADMIN_USER", "admin"),
-		OCAdminPassword:  os.Getenv("OC_ADMIN_PASSWORD"),
-		OCInsecure:       parseBool(os.Getenv("OC_INSECURE")),
-		AppBaseURL:       getEnv("APP_BASE_URL", "http://localhost:8080"),
+		ListenAddr:       ":8080",
+		DBPath:           "/data/registration.db",
+		RegistrationMode: "open",
+		OCAdminUser:      "admin",
+		AppBaseURL:       "http://localhost:8080",
 	}
 
+	// 2. Load from YAML if exists
+	configPath := getEnv("CONFIG_PATH", "/data/config.yml")
+	if _, err := os.Stat(configPath); err == nil {
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			return nil, errors.New("could not read config file: " + err.Error())
+		}
+		if err := yaml.Unmarshal(data, cfg); err != nil {
+			return nil, errors.New("could not parse config file: " + err.Error())
+		}
+	}
+
+	// 3. Environment Variables (Highest Precedence)
+	if v := os.Getenv("LISTEN_ADDR"); v != "" {
+		cfg.ListenAddr = v
+	}
+	if v := os.Getenv("DB_PATH"); v != "" {
+		cfg.DBPath = v
+	}
+	if v := os.Getenv("REGISTRATION_MODE"); v != "" {
+		cfg.RegistrationMode = v
+	}
+	if v := os.Getenv("ADMIN_TOKEN"); v != "" {
+		cfg.AdminToken = v
+	}
+	if v := os.Getenv("OC_URL"); v != "" {
+		cfg.OCUrl = v
+	}
+	if v := os.Getenv("OC_ADMIN_USER"); v != "" {
+		cfg.OCAdminUser = v
+	}
+	if v := os.Getenv("OC_ADMIN_PASSWORD"); v != "" {
+		cfg.OCAdminPassword = v
+	}
+	if v := os.Getenv("OC_INSECURE"); v != "" {
+		cfg.OCInsecure = parseBool(v)
+	}
+	if v := os.Getenv("APP_BASE_URL"); v != "" {
+		cfg.AppBaseURL = v
+	}
+	if v := os.Getenv("TEMPLATE_DIR"); v != "" {
+		cfg.TemplateDir = v
+	}
+
+	// 4. Validate
 	var errs []string
 	if cfg.OCUrl == "" {
 		errs = append(errs, "OC_URL is required")
@@ -54,6 +99,21 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func (c *Config) Obfuscate() map[string]any {
+	return map[string]any{
+		"ListenAddr":       c.ListenAddr,
+		"DBPath":           c.DBPath,
+		"RegistrationMode": c.RegistrationMode,
+		"AdminToken":       "***",
+		"OCUrl":            c.OCUrl,
+		"OCAdminUser":      c.OCAdminUser,
+		"OCAdminPassword":  "***",
+		"OCInsecure":       c.OCInsecure,
+		"AppBaseURL":       c.AppBaseURL,
+		"TemplateDir":      c.TemplateDir,
+	}
 }
 
 func getEnv(key, fallback string) string {

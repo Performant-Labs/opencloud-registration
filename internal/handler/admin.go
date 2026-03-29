@@ -1,9 +1,9 @@
 package handler
 
 import (
-	"context"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 
 	"github.com/Performant-Labs/opencloud-registration/internal/config"
@@ -15,10 +15,10 @@ type AdminHandler struct {
 	cfg      *config.Config
 	db       *db.DB
 	ocClient *opencloud.Client
-	tmpl     *template.Template
+	tmpl     map[string]*template.Template
 }
 
-func NewAdminHandler(cfg *config.Config, database *db.DB, oc *opencloud.Client, tmpl *template.Template) *AdminHandler {
+func NewAdminHandler(cfg *config.Config, database *db.DB, oc *opencloud.Client, tmpl map[string]*template.Template) *AdminHandler {
 	return &AdminHandler{cfg: cfg, db: database, ocClient: oc, tmpl: tmpl}
 }
 
@@ -33,14 +33,15 @@ func (h *AdminHandler) List(w http.ResponseWriter, r *http.Request) {
 	if status == "" {
 		status = "pending"
 	}
-	regs, err := h.db.ListRegistrationsByStatus(status)
+	regs, err := h.db.ListRegistrationsByStatus(r.Context(), status)
 	if err != nil {
+		log.Printf("ListRegistrationsByStatus '%s' failed: %v", status, err)
 		http.Error(w, "database error", http.StatusInternalServerError)
 		return
 	}
 	token := r.URL.Query().Get("token")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = h.tmpl.ExecuteTemplate(w, "admin.html", adminPageData{
+	_ = h.tmpl["admin.html"].ExecuteTemplate(w, "admin.html", adminPageData{
 		Registrations: regs,
 		Status:        status,
 		AdminToken:    token,
@@ -49,8 +50,9 @@ func (h *AdminHandler) List(w http.ResponseWriter, r *http.Request) {
 
 func (h *AdminHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	reg, err := h.db.GetRegistration(id)
+	reg, err := h.db.GetRegistration(r.Context(), id)
 	if err != nil {
+		log.Printf("GetRegistration '%s' failed: %v", id, err)
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -61,34 +63,36 @@ func (h *AdminHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.ocClient.CreateUser(context.Background(), opencloud.CreateUserRequest{
+	err = h.ocClient.CreateUser(r.Context(), opencloud.CreateUserRequest{
 		DisplayName:              reg.DisplayName,
 		Mail:                     reg.Email,
 		OnPremisesSamAccountName: reg.Username,
 		PasswordProfile:          opencloud.PasswordProfile{Password: plainPassword},
 	})
 	if err != nil {
-		_ = h.db.AppendAuditLog(id, "oc_failed", err.Error())
-		h.respondError(w, r, id, fmt.Sprintf("OpenCloud error: %v", err))
+		log.Printf("admin approval OC creation failed: %v", err)
+		_ = h.db.AppendAuditLog(r.Context(), id, "oc_failed", err.Error())
+		h.respondError(w, r, id, "OpenCloud provisioning error, please check logs.")
 		return
 	}
 
-	_ = h.db.UpdateStatus(id, "approved", "admin")
-	_ = h.db.AppendAuditLog(id, "oc_created", "")
+	_ = h.db.UpdateStatus(r.Context(), id, "approved", "admin")
+	_ = h.db.AppendAuditLog(r.Context(), id, "oc_created", "")
 
 	h.respondRow(w, r, reg, "approved", "")
 }
 
 func (h *AdminHandler) Reject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	reg, err := h.db.GetRegistration(id)
+	reg, err := h.db.GetRegistration(r.Context(), id)
 	if err != nil {
+		log.Printf("GetRegistration '%s' failed: %v", id, err)
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 
-	_ = h.db.UpdateStatus(id, "rejected", "admin")
-	_ = h.db.AppendAuditLog(id, "rejected", "")
+	_ = h.db.UpdateStatus(r.Context(), id, "rejected", "admin")
+	_ = h.db.AppendAuditLog(r.Context(), id, "rejected", "")
 
 	h.respondRow(w, r, reg, "rejected", "")
 }
@@ -101,7 +105,7 @@ func (h *AdminHandler) respondRow(w http.ResponseWriter, r *http.Request, reg *d
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = h.tmpl.ExecuteTemplate(w, "admin_row.html", map[string]any{
+	_ = h.tmpl["admin_row.html"].ExecuteTemplate(w, "admin_row.html", map[string]any{
 		"Reg":    reg,
 		"Status": status,
 		"Error":  errMsg,

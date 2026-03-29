@@ -11,7 +11,7 @@ opencloud-registration/
 ├── assets.go                          # //go:embed templates static
 ├── cmd/server/main.go                 # entry point: wire config, db, handlers
 ├── internal/
-│   ├── config/config.go               # env var loading + validation
+│   ├── config/config.go               # viper configuration loading (multi-path, yaml/env) + validation
 │   ├── db/
 │   │   ├── db.go                      # SQLite CRUD (Open, Migrate, Create, List, Update, Audit)
 │   │   └── schema.go                  # DDL: registrations + audit_log tables
@@ -67,19 +67,35 @@ opencloud-registration/
 
 ---
 
-## Environment Variables
+## Configuration Variables
 
-| Variable | Default | Required |
-|----------|---------|----------|
-| `OC_URL` | — | ✓ |
-| `OC_ADMIN_PASSWORD` | — | ✓ |
-| `ADMIN_TOKEN` | — | ✓ |
-| `OC_ADMIN_USER` | `admin` | |
-| `OC_INSECURE` | `false` | |
-| `REGISTRATION_MODE` | `open` | |
-| `APP_BASE_URL` | `http://localhost:8080` | |
-| `DB_PATH` | `/data/registration.db` | |
-| `LISTEN_ADDR` | `:8080` | |
+The application utilizes `spf13/viper` for multi-layered configuration. Settings can safely be defined in a `registration.yml` (or `.json`, `.toml`) file or directly via Environment Variables.
+
+**Precedence Rules:**
+1. Environment Variables (Highest)
+2. Viper Config File (`registration.*`)
+3. Hardcoded Defaults
+
+**Viper Search Locations (In Order):**
+1. Path declared by `CONFIG_PATH` env var
+2. `./` (Current working directory)
+3. `/data/` (Docker volume)
+4. `$HOME/.opencloud-registration/`
+5. `/etc/opencloud-registration/`
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `OC_URL` | — | ✓ | Base URL for OpenCloud |
+| `OC_ADMIN_PASSWORD` | — | ✓ | Used for basic auth on Graph API |
+| `ADMIN_TOKEN` | — | ✓ | Dashboard token & encryption seed |
+| `OC_ADMIN_USER` | `admin` | | Graph API Account |
+| `OC_INSECURE` | `false` | | Skip TLS validation |
+| `REGISTRATION_MODE` | `open` | | `open` or `approval` |
+| `APP_BASE_URL` | `http://localhost:8080` | | Used in templates |
+| `DB_PATH` | `/data/registration.db` | | SQLite path |
+| `LISTEN_ADDR` | `:8080` | | Server listen port |
+| `CONFIG_PATH` | `/data/config.yml` | | (Legacy) Override Viper search |
+| `TEMPLATE_DIR` | — | | Override embedded templates |
 
 ---
 

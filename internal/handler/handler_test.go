@@ -42,7 +42,7 @@ func mockOCServer(t *testing.T, status int) *httptest.Server {
 	return srv
 }
 
-func newTestDeps(t *testing.T, mode string, ocStatus int) (*config.Config, *db.DB, *opencloud.Client, *template.Template) {
+func newTestDeps(t *testing.T, mode string, ocStatus int) (*config.Config, *db.DB, *opencloud.Client, map[string]*template.Template) {
 	t.Helper()
 
 	srv := mockOCServer(t, ocStatus)
@@ -60,7 +60,7 @@ func newTestDeps(t *testing.T, mode string, ocStatus int) (*config.Config, *db.D
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := database.Migrate(); err != nil {
+	if err := database.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	t.Cleanup(func() { database.Close() })
@@ -72,7 +72,7 @@ func newTestDeps(t *testing.T, mode string, ocStatus int) (*config.Config, *db.D
 	return cfg, database, ocClient, tmpl
 }
 
-func mustParseTemplates(t *testing.T) *template.Template {
+func mustParseTemplates(t *testing.T) map[string]*template.Template {
 	t.Helper()
 	funcMap := template.FuncMap{
 		"map": func(pairs ...any) map[string]any {
@@ -98,7 +98,13 @@ func mustParseTemplates(t *testing.T) *template.Template {
 	if err != nil {
 		t.Fatalf("parse templates: %v", err)
 	}
-	return tmpl
+	return map[string]*template.Template{
+		"register.html":  tmpl,
+		"success.html":   tmpl,
+		"pending.html":   tmpl,
+		"admin.html":     tmpl,
+		"admin_row.html": tmpl,
+	}
 }
 
 func postForm(values url.Values) *http.Request {
@@ -160,7 +166,7 @@ func TestHandleRegister_ValidationErrors(t *testing.T) {
 				t.Errorf("status: got %d, want 200", w.Code)
 			}
 
-			regs, _ := database.ListRegistrationsByStatus("pending")
+			regs, _ := database.ListRegistrationsByStatus(context.Background(), "pending")
 			if len(regs) != 0 {
 				t.Error("no registration should have been created")
 			}
@@ -182,7 +188,7 @@ func TestHandleRegister_OpenMode_Success(t *testing.T) {
 	}
 
 	// In open mode, nothing should be stored in the DB
-	regs, _ := database.ListRegistrationsByStatus("pending")
+	regs, _ := database.ListRegistrationsByStatus(context.Background(), "pending")
 	if len(regs) != 0 {
 		t.Error("open mode should not write to DB")
 	}
@@ -213,7 +219,7 @@ func TestHandleRegister_ApprovalMode(t *testing.T) {
 		t.Errorf("HX-Redirect: got %q", w.Header().Get("HX-Redirect"))
 	}
 
-	regs, _ := database.ListRegistrationsByStatus("pending")
+	regs, _ := database.ListRegistrationsByStatus(context.Background(), "pending")
 	if len(regs) != 1 {
 		t.Fatalf("expected 1 pending registration, got %d", len(regs))
 	}
@@ -241,7 +247,7 @@ func TestHandleRegister_DuplicateUsername(t *testing.T) {
 		t.Errorf("status: got %d", w.Code)
 	}
 
-	regs, _ := database.ListRegistrationsByStatus("pending")
+	regs, _ := database.ListRegistrationsByStatus(context.Background(), "pending")
 	if len(regs) != 1 {
 		t.Errorf("should still have exactly 1 pending registration, got %d", len(regs))
 	}

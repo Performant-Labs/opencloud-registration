@@ -1,237 +1,366 @@
+// Integration tests — run against the live stack (./occtl start).
+// Skipped automatically when the stack is not reachable.
+//
+// Defaults match pl-opencloud-server/.env; override with env vars:
+//
+//	REGISTRATION_URL   https://register.opencloud.test
+//	OC_URL             https://cloud.opencloud.test
+//	ADMIN_TOKEN        localtest
+//	OC_ADMIN_USER      admin
+//	OC_ADMIN_PASSWORD  admin
 package e2e_test
 
 import (
+	"crypto/tls"
 	"encoding/json"
-	"html/template"
+	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/Performant-Labs/opencloud-registration/internal/config"
-	"github.com/Performant-Labs/opencloud-registration/internal/db"
-	"github.com/Performant-Labs/opencloud-registration/internal/handler"
-	"github.com/Performant-Labs/opencloud-registration/internal/opencloud"
+	"time"
 )
 
-// testEnv wires up the full server with a mock OpenCloud backend.
-type testEnv struct {
-	server     *httptest.Server
-	ocServer   *httptest.Server
-	ocRequests []*http.Request
-	ocStatus   int
-	db         *db.DB
-	adminToken string
+// ── Config ────────────────────────────────────────────────────────────────────
+
+var (
+	regURL   = envOr("REGISTRATION_URL", "https://register.opencloud.test")
+	ocURL    = envOr("OC_URL", "https://cloud.opencloud.test")
+	regToken = envOr("ADMIN_TOKEN", "localtest")
+	ocUser   = envOr("OC_ADMIN_USER", "admin")
+	ocPass   = envOr("OC_ADMIN_PASSWORD", "admin")
+)
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
-func newEnv(t *testing.T, mode string) *testEnv {
+// ── HTTP client ───────────────────────────────────────────────────────────────
+
+// newClient returns an HTTPS client that accepts self-signed certs and does
+// NOT follow redirects, so tests can assert on redirect targets directly.
+func newClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// requireStack skips the test if the registration service is not reachable.
+func requireStack(t *testing.T, client *http.Client) {
 	t.Helper()
-
-	env := &testEnv{adminToken: "e2e-token", ocStatus: http.StatusCreated}
-
-	env.ocServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		env.ocRequests = append(env.ocRequests, r.Clone(r.Context()))
-		w.WriteHeader(env.ocStatus)
-	}))
-	t.Cleanup(env.ocServer.Close)
-
-	database, err := db.Open(":memory:")
+	resp, err := client.Get(regURL + "/health")
 	if err != nil {
-		t.Fatalf("open db: %v", err)
+		t.Skipf("stack not reachable (%v) — run ./occtl start", err)
 	}
-	if err := database.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Skipf("health check returned %d — stack may be starting up", resp.StatusCode)
 	}
-	env.db = database
-	t.Cleanup(func() { database.Close() })
-
-	cfg := &config.Config{
-		RegistrationMode: mode,
-		AdminToken:       env.adminToken,
-		OCUrl:            env.ocServer.URL,
-		OCAdminUser:      "admin",
-		OCAdminPassword:  "secret",
-		AppBaseURL:       "https://cloud.example.com",
-	}
-
-	ocClient := opencloud.NewClient(cfg)
-	tmpl := buildTemplates(t)
-
-	regHandler := handler.NewRegisterHandler(cfg, database, ocClient, tmpl)
-	adminHandler := handler.NewAdminHandler(cfg, database, ocClient, tmpl)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", regHandler.ShowForm)
-	mux.HandleFunc("POST /register", regHandler.HandleSubmit)
-	mux.HandleFunc("GET /success", regHandler.ShowSuccess)
-	mux.HandleFunc("GET /pending", regHandler.ShowPending)
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck
-	})
-
-	adminMux := http.NewServeMux()
-	adminMux.HandleFunc("GET /admin", adminHandler.List)
-	adminMux.HandleFunc("POST /admin/approve/{id}", adminHandler.Approve)
-	adminMux.HandleFunc("POST /admin/reject/{id}", adminHandler.Reject)
-	mux.Handle("/admin", handler.AdminAuth(env.adminToken, adminMux))
-	mux.Handle("/admin/", handler.AdminAuth(env.adminToken, adminMux))
-
-	env.server = httptest.NewServer(mux)
-	t.Cleanup(env.server.Close)
-
-	return env
 }
 
-func (e *testEnv) get(t *testing.T, path string) *http.Response {
+// ── Test user helpers ─────────────────────────────────────────────────────────
+
+// runID returns a short suffix unique to this test run so users created in
+// parallel or repeated runs don't collide.
+var runID = fmt.Sprintf("%d", time.Now().UnixMilli()%1_000_000)
+
+func testUsername(name string) string { return fmt.Sprintf("t%s-%s", runID, name) }
+func testEmail(name string) string    { return fmt.Sprintf("t%s-%s@test.example", runID, name) }
+
+// deleteOCUser removes a user from OpenCloud by username, failing silently if
+// the user doesn't exist (idempotent cleanup).
+func deleteOCUser(t *testing.T, client *http.Client, username string) {
 	t.Helper()
-	resp, err := http.Get(e.server.URL + path)
+
+	req, _ := http.NewRequest(http.MethodGet, ocURL+"/graph/v1.0/users", nil)
+	req.SetBasicAuth(ocUser, ocPass)
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Value []struct {
+			ID                       string `json:"id"`
+			OnPremisesSamAccountName string `json:"onPremisesSamAccountName"`
+		} `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return
+	}
+	for _, u := range result.Value {
+		if u.OnPremisesSamAccountName == username {
+			del, _ := http.NewRequest(http.MethodDelete, ocURL+"/graph/v1.0/users/"+u.ID, nil)
+			del.SetBasicAuth(ocUser, ocPass)
+			client.Do(del) //nolint:errcheck
+			return
+		}
+	}
+}
+
+// ── Request helpers ───────────────────────────────────────────────────────────
+
+func get(t *testing.T, client *http.Client, path string) *http.Response {
+	t.Helper()
+	resp, err := client.Get(regURL + path)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
 	return resp
 }
 
-func (e *testEnv) htmxPost(t *testing.T, path string, form url.Values) *http.Response {
+func htmxPost(t *testing.T, client *http.Client, path string, form url.Values) *http.Response {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, e.server.URL+path, strings.NewReader(form.Encode()))
+	req, _ := http.NewRequest(http.MethodPost, regURL+path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("HX-Request", "true")
-	resp, err := (&http.Client{}).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("htmx POST %s: %v", path, err)
+		t.Fatalf("POST %s: %v", path, err)
 	}
 	return resp
 }
 
-func validForm() url.Values {
-	return url.Values{
-		"display_name":     {"E2E User"},
-		"username":         {"e2euser"},
-		"email":            {"e2e@example.com"},
-		"password":         {"password123"},
-		"password_confirm": {"password123"},
+func readBody(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
 	}
+	return string(b)
 }
 
-func TestE2E_HealthCheck(t *testing.T) {
-	env := newEnv(t, "open")
-	resp := env.get(t, "/health")
-	defer resp.Body.Close()
+// register submits the registration form and returns the response.
+// It registers cleanup of the OC user so the test is repeatable.
+func register(t *testing.T, client *http.Client, username, email string) *http.Response {
+	t.Helper()
+	t.Cleanup(func() { deleteOCUser(t, client, username) })
+	form := url.Values{
+		"display_name":     {username},
+		"username":         {username},
+		"email":            {email},
+		"password":         {"Password123!"},
+		"password_confirm": {"Password123!"},
+	}
+	return htmxPost(t, client, "/register", form)
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+func TestLive_HealthCheck(t *testing.T) {
+	client := newClient()
+	requireStack(t, client)
+
+	resp := get(t, client, "/health")
+	body := readBody(t, resp)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: got %d", resp.StatusCode)
 	}
-	var body map[string]string
-	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
-	if body["status"] != "ok" {
-		t.Errorf("body: got %v", body)
+	if !strings.Contains(body, `"ok"`) {
+		t.Errorf("expected {\"status\":\"ok\"}, got: %s", body)
 	}
 }
 
-func TestE2E_OpenRegistration(t *testing.T) {
-	env := newEnv(t, "open")
+// Regression: template set shared across pages caused success.html's content
+// block to win alphabetically, so GET / showed the success page instead of
+// the registration form.
+func TestLive_RegistrationFormAtRoot(t *testing.T) {
+	client := newClient()
+	requireStack(t, client)
 
-	resp := env.htmxPost(t, "/register", validForm())
+	body := readBody(t, get(t, client, "/"))
+
+	if !strings.Contains(body, "form-container") {
+		t.Errorf("GET / should render the registration form; got:\n%s", body)
+	}
+	if strings.Contains(body, "Go to OpenCloud") {
+		t.Error("GET / must not render the success page content")
+	}
+}
+
+// Regression: success page linked to AppBaseURL (registration app) instead of
+// the OpenCloud URL. Also verifies it links to the sign-in page, not the root,
+// so a returning admin session doesn't mask the new user's login.
+func TestLive_SuccessPageLinksToOpenCloud(t *testing.T) {
+	client := newClient()
+	requireStack(t, client)
+
+	body := readBody(t, get(t, client, "/success"))
+
+	signinURL := ocURL + "/signin/v1/identifier"
+	if !strings.Contains(body, signinURL) {
+		t.Errorf("success page should link to sign-in page (%s); body:\n%s", signinURL, body)
+	}
+	if strings.Contains(body, regURL) {
+		t.Errorf("success page must not link back to the registration app (%s)", regURL)
+	}
+}
+
+// Full open-mode flow: submit form → redirect to /success → every field the
+// user typed in the form is present in the OpenCloud user record.
+func TestLive_OpenRegistration_CreatesUser(t *testing.T) {
+	client := newClient()
+	requireStack(t, client)
+
+	username := testUsername("reg")
+	displayName := "Reg Test User"
+	email := testEmail("reg")
+
+	t.Cleanup(func() { deleteOCUser(t, client, username) })
+
+	form := url.Values{
+		"display_name":     {displayName},
+		"username":         {username},
+		"email":            {email},
+		"password":         {"TestPass123"},
+		"password_confirm": {"TestPass123"},
+	}
+	resp := htmxPost(t, client, "/register", form)
 	defer resp.Body.Close()
 
 	if resp.Header.Get("HX-Redirect") != "/success" {
-		t.Errorf("HX-Redirect: got %q", resp.Header.Get("HX-Redirect"))
+		t.Fatalf("expected HX-Redirect to /success, got %q", resp.Header.Get("HX-Redirect"))
 	}
-	if len(env.ocRequests) != 1 {
-		t.Fatalf("expected 1 OC request, got %d", len(env.ocRequests))
+
+	// Verify every submitted field landed in the OpenCloud user record.
+	req, _ := http.NewRequest(http.MethodGet, ocURL+"/graph/v1.0/users", nil)
+	req.SetBasicAuth(ocUser, ocPass)
+	ocResp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("query OC users: %v", err)
 	}
-	if !strings.HasSuffix(env.ocRequests[0].URL.Path, "/graph/v1.0/users") {
-		t.Errorf("OC path: got %s", env.ocRequests[0].URL.Path)
+	defer ocResp.Body.Close()
+
+	var result struct {
+		Value []struct {
+			DisplayName              string `json:"displayName"`
+			OnPremisesSamAccountName string `json:"onPremisesSamAccountName"`
+			Mail                     string `json:"mail"`
+		} `json:"value"`
 	}
+	if err := json.NewDecoder(ocResp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode OC response: %v", err)
+	}
+	for _, u := range result.Value {
+		if u.OnPremisesSamAccountName == username {
+			if u.DisplayName != displayName {
+				t.Errorf("displayName: got %q, want %q", u.DisplayName, displayName)
+			}
+			if u.Mail != email {
+				t.Errorf("mail: got %q, want %q", u.Mail, email)
+			}
+			return
+		}
+	}
+	t.Errorf("user %q not found in OpenCloud after registration", username)
 }
 
-func TestE2E_ApprovalFlow(t *testing.T) {
-	env := newEnv(t, "approval")
+// Full open-mode flow including credential verification: the registered user
+// must be able to authenticate against OpenCloud, not just exist in the user list.
+func TestLive_OpenRegistration_UserCanLogin(t *testing.T) {
+	client := newClient()
+	requireStack(t, client)
 
-	resp := env.htmxPost(t, "/register", validForm())
+	username := testUsername("login")
+	email := testEmail("login")
+	password := "TestPass123"
+
+	form := url.Values{
+		"display_name":     {username},
+		"username":         {username},
+		"email":            {email},
+		"password":         {password},
+		"password_confirm": {password},
+	}
+	t.Cleanup(func() { deleteOCUser(t, client, username) })
+
+	resp := htmxPost(t, client, "/register", form)
 	resp.Body.Close()
-
-	if resp.Header.Get("HX-Redirect") != "/pending" {
-		t.Errorf("HX-Redirect: got %q", resp.Header.Get("HX-Redirect"))
-	}
-	if len(env.ocRequests) != 0 {
-		t.Error("OC should not be called before approval")
+	if resp.Header.Get("HX-Redirect") != "/success" {
+		t.Fatalf("registration failed — no redirect to /success")
 	}
 
-	regs, _ := env.db.ListRegistrationsByStatus("pending")
-	if len(regs) != 1 {
-		t.Fatalf("expected 1 pending, got %d", len(regs))
+	// Verify credentials work against OpenCloud WebDAV.
+	req, _ := http.NewRequest(http.MethodGet, ocURL+"/dav/files/"+username+"/", nil)
+	req.SetBasicAuth(username, password)
+	davResp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("WebDAV request failed: %v", err)
 	}
-	id := regs[0].ID
+	davResp.Body.Close()
 
-	approveResp := env.htmxPost(t, "/admin/approve/"+id+"?token="+env.adminToken, url.Values{})
-	approveResp.Body.Close()
-
-	if len(env.ocRequests) != 1 {
-		t.Fatalf("expected OC to be called on approval, got %d calls", len(env.ocRequests))
-	}
-	approved, _ := env.db.ListRegistrationsByStatus("approved")
-	if len(approved) != 1 {
-		t.Errorf("expected 1 approved, got %d", len(approved))
+	if davResp.StatusCode != http.StatusOK {
+		t.Errorf("new user could not log in: WebDAV returned %d (expected 200)", davResp.StatusCode)
 	}
 }
 
-func TestE2E_ApprovalReject(t *testing.T) {
-	env := newEnv(t, "approval")
+// Regression: duplicate email was not caught in open mode because the DB
+// was never written to, so the uniqueness check always found nothing.
+func TestLive_DuplicateEmail_Rejected(t *testing.T) {
+	client := newClient()
+	requireStack(t, client)
 
-	resp := env.htmxPost(t, "/register", validForm())
-	resp.Body.Close()
+	username := testUsername("dupe-email")
+	email := testEmail("dupe-email")
 
-	regs, _ := env.db.ListRegistrationsByStatus("pending")
-	id := regs[0].ID
-
-	rejectResp := env.htmxPost(t, "/admin/reject/"+id+"?token="+env.adminToken, url.Values{})
-	rejectResp.Body.Close()
-
-	if len(env.ocRequests) != 0 {
-		t.Error("OC should not be called on rejection")
-	}
-	rejected, _ := env.db.ListRegistrationsByStatus("rejected")
-	if len(rejected) != 1 {
-		t.Errorf("expected 1 rejected, got %d", len(rejected))
-	}
-}
-
-func TestE2E_DuplicateRegistration(t *testing.T) {
-	// In approval mode, pending registrations are stored in the DB, so
-	// a second submission with the same username/email is caught before
-	// touching OpenCloud.
-	env := newEnv(t, "approval")
-
-	r1 := env.htmxPost(t, "/register", validForm())
+	r1 := register(t, client, username, email)
 	r1.Body.Close()
-
-	// Same username, different email
-	form2 := validForm()
-	form2.Set("email", "other@example.com")
-	r2 := env.htmxPost(t, "/register", form2)
-	io.Copy(io.Discard, r2.Body) //nolint:errcheck
-	r2.Body.Close()
-
-	if r2.Header.Get("HX-Redirect") == "/pending" {
-		t.Error("duplicate username should not be accepted")
+	if r1.Header.Get("HX-Redirect") != "/success" {
+		t.Fatal("first registration should succeed")
 	}
-	// OC must never be called in approval mode before an admin approves
-	if len(env.ocRequests) != 0 {
-		t.Errorf("OC should not be called in approval mode, got %d calls", len(env.ocRequests))
+
+	// Same email, different username.
+	r2 := register(t, client, testUsername("dupe-email-b"), email)
+	body := readBody(t, r2)
+
+	if r2.Header.Get("HX-Redirect") == "/success" {
+		t.Error("duplicate email should be rejected")
 	}
-	regs, _ := env.db.ListRegistrationsByStatus("pending")
-	if len(regs) != 1 {
-		t.Errorf("only 1 pending registration should exist, got %d", len(regs))
+	if !strings.Contains(body, "email is already registered") {
+		t.Errorf("expected 'email is already registered' error; got:\n%s", body)
 	}
 }
 
-func TestE2E_AdminAuthRequired(t *testing.T) {
-	env := newEnv(t, "approval")
+func TestLive_DuplicateUsername_Rejected(t *testing.T) {
+	client := newClient()
+	requireStack(t, client)
+
+	username := testUsername("dupe-user")
+
+	r1 := register(t, client, username, testEmail("dupe-user"))
+	r1.Body.Close()
+	if r1.Header.Get("HX-Redirect") != "/success" {
+		t.Fatal("first registration should succeed")
+	}
+
+	// Same username, different email.
+	r2 := register(t, client, username, testEmail("dupe-user-b"))
+	body := readBody(t, r2)
+
+	if r2.Header.Get("HX-Redirect") == "/success" {
+		t.Error("duplicate username should be rejected")
+	}
+	if !strings.Contains(body, "username is already taken") {
+		t.Errorf("expected 'username is already taken' error; got:\n%s", body)
+	}
+}
+
+func TestLive_AdminAuth_Required(t *testing.T) {
+	client := newClient()
+	requireStack(t, client)
 
 	cases := []struct{ name, path string }{
 		{"no token", "/admin"},
@@ -239,17 +368,26 @@ func TestE2E_AdminAuthRequired(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := env.get(t, tc.path)
+			resp := get(t, client, tc.path)
 			resp.Body.Close()
 			if resp.StatusCode != http.StatusUnauthorized {
-				t.Errorf("status: got %d, want 401", resp.StatusCode)
+				t.Errorf("expected 401, got %d", resp.StatusCode)
 			}
 		})
 	}
 }
 
-func TestE2E_FieldValidation(t *testing.T) {
-	env := newEnv(t, "open")
+func TestLive_FieldValidation_Rejected(t *testing.T) {
+	client := newClient()
+	requireStack(t, client)
+
+	base := url.Values{
+		"display_name":     {testUsername("val")},
+		"username":         {testUsername("val")},
+		"email":            {testEmail("val")},
+		"password":         {"Password123!"},
+		"password_confirm": {"Password123!"},
+	}
 
 	cases := []struct {
 		name   string
@@ -261,69 +399,156 @@ func TestE2E_FieldValidation(t *testing.T) {
 		{"short password", func(v url.Values) { v.Set("password", "short"); v.Set("password_confirm", "short") }},
 		{"password mismatch", func(v url.Values) { v.Set("password_confirm", "different!") }},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			form := validForm()
+			form := url.Values{}
+			for k, v := range base {
+				form[k] = v
+			}
 			tc.mutate(form)
-			resp := env.htmxPost(t, "/register", form)
+			resp := htmxPost(t, client, "/register", form)
 			resp.Body.Close()
 			if resp.Header.Get("HX-Redirect") == "/success" {
-				t.Error("invalid form should not redirect to /success")
+				t.Errorf("invalid input (%s) should not redirect to /success", tc.name)
 			}
 		})
 	}
-	if len(env.ocRequests) != 0 {
-		t.Errorf("OC should never be called for invalid submissions, got %d calls", len(env.ocRequests))
+}
+
+// Regression: htmx form error responses returned the full page (base template +
+// header + card) inside the existing page, causing nested rendering. The fix
+// renders only the #form-container fragment for htmx requests. This test ensures
+// that regression stays caught.
+func TestLive_HtmxErrorResponse_IsFragment(t *testing.T) {
+	client := newClient()
+	requireStack(t, client)
+
+	// Submit invalid form via htmx — blank display_name triggers validation error.
+	form := url.Values{
+		"display_name":     {""},
+		"username":         {testUsername("frag")},
+		"email":            {testEmail("frag")},
+		"password":         {"TestPass123"},
+		"password_confirm": {"TestPass123"},
+	}
+	resp := htmxPost(t, client, "/register", form)
+	body := readBody(t, resp)
+
+	// The response must be just the form fragment, not a full HTML page.
+	if strings.Contains(body, "<html") {
+		t.Error("htmx error response contains <html> — full page returned instead of fragment")
+	}
+	if strings.Contains(body, "<header") {
+		t.Error("htmx error response contains <header> — full page returned instead of fragment")
+	}
+	if !strings.Contains(body, `id="form-container"`) {
+		t.Errorf("htmx error response missing #form-container; got:\n%s", body)
+	}
+	if !strings.Contains(body, "error-banner") {
+		t.Errorf("htmx error response should contain the error banner; got:\n%s", body)
 	}
 }
 
-func TestE2E_OCError_ShowsFormError(t *testing.T) {
-	env := newEnv(t, "open")
-	env.ocStatus = http.StatusInternalServerError
+// Walks the complete registration flow as a connected sequence:
+//  1. GET /             → see the form
+//  2. POST /register    → htmx redirect to /success
+//  3. GET /success      → see sign-in link
+//  4. GET sign-in link  → OpenCloud login page loads
+//  5. WebDAV auth       → new credentials work
+func TestLive_FullFlow_FormToLogin(t *testing.T) {
+	client := newClient()
+	requireStack(t, client)
 
-	resp := env.htmxPost(t, "/register", validForm())
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck
-	resp.Body.Close()
+	username := testUsername("flow")
+	email := testEmail("flow")
+	password := "TestPass123"
+	t.Cleanup(func() { deleteOCUser(t, client, username) })
 
-	if resp.Header.Get("HX-Redirect") == "/success" {
-		t.Error("OC error should not redirect to success")
-	}
-}
-
-func buildTemplates(t *testing.T) *template.Template {
-	t.Helper()
-	funcMap := template.FuncMap{
-		"map": func(pairs ...any) map[string]any {
-			m := make(map[string]any, len(pairs)/2)
-			for i := 0; i+1 < len(pairs); i += 2 {
-				if k, ok := pairs[i].(string); ok {
-					m[k] = pairs[i+1]
-				}
-			}
-			return m
-		},
+	// 1. GET / — registration form
+	formPage := readBody(t, get(t, client, "/"))
+	if !strings.Contains(formPage, `id="form-container"`) {
+		t.Fatalf("step 1: GET / did not return the registration form")
 	}
 
-	// Prefer real templates when running from the project root
-	if _, err := os.Stat("../templates"); err == nil {
-		tmpl, err := template.New("").Funcs(funcMap).ParseGlob("../templates/*.html")
-		if err == nil {
-			return tmpl
-		}
-		t.Logf("could not load real templates (%v) — using inline stubs", err)
+	// 2. POST /register — submit via htmx
+	form := url.Values{
+		"display_name":     {username},
+		"username":         {username},
+		"email":            {email},
+		"password":         {password},
+		"password_confirm": {password},
+	}
+	regResp := htmxPost(t, client, "/register", form)
+	regResp.Body.Close()
+	redirect := regResp.Header.Get("HX-Redirect")
+	if redirect != "/success" {
+		t.Fatalf("step 2: expected HX-Redirect /success, got %q", redirect)
 	}
 
-	src := `
-{{define "base"}}OK{{end}}
-{{define "register.html"}}{{template "base" .}}{{end}}
-{{define "success.html"}}{{template "base" .}}{{end}}
-{{define "pending.html"}}{{template "base" .}}{{end}}
-{{define "admin.html"}}{{template "base" .}}{{end}}
-{{define "admin_row.html"}}{{if .Error}}<td class="error">{{.Error}}</td>{{else}}<td>{{.Status}}</td>{{end}}{{end}}
-`
-	tmpl, err := template.New("").Funcs(funcMap).Parse(src)
+	// 3. GET /success — follow the redirect, verify content
+	successBody := readBody(t, get(t, client, redirect))
+	signinURL := ocURL + "/signin/v1/identifier"
+	if !strings.Contains(successBody, signinURL) {
+		t.Fatalf("step 3: success page missing sign-in link (%s)", signinURL)
+	}
+
+	// 4. Follow the sign-in link — OpenCloud login page loads
+	signinResp := get(t, client, "")
+	// signinURL is absolute, not relative to registration server
+	signinReq, _ := http.NewRequest(http.MethodGet, signinURL, nil)
+	signinResp, err := client.Do(signinReq)
 	if err != nil {
-		t.Fatalf("parse inline templates: %v", err)
+		t.Fatalf("step 4: sign-in page request failed: %v", err)
 	}
-	return tmpl
+	signinBody := readBody(t, signinResp)
+	if signinResp.StatusCode != http.StatusOK {
+		t.Fatalf("step 4: sign-in page returned %d", signinResp.StatusCode)
+	}
+	if !strings.Contains(signinBody, "Sign in") {
+		t.Errorf("step 4: sign-in page doesn't contain 'Sign in'")
+	}
+
+	// 5. Authenticate as the new user via WebDAV
+	davReq, _ := http.NewRequest(http.MethodGet, ocURL+"/dav/files/"+username+"/", nil)
+	davReq.SetBasicAuth(username, password)
+	davResp, err := client.Do(davReq)
+	if err != nil {
+		t.Fatalf("step 5: WebDAV request failed: %v", err)
+	}
+	davResp.Body.Close()
+	if davResp.StatusCode != http.StatusOK {
+		t.Errorf("step 5: new user login failed — WebDAV returned %d", davResp.StatusCode)
+	}
+}
+
+// Verifies that a registration in open mode shows up in the admin panel.
+func TestLive_AdminPanel_ShowsRegistration(t *testing.T) {
+	client := newClient()
+	requireStack(t, client)
+
+	username := testUsername("admpanel")
+	email := testEmail("admpanel")
+	t.Cleanup(func() { deleteOCUser(t, client, username) })
+
+	// Register a user.
+	resp := register(t, client, username, email)
+	resp.Body.Close()
+	if resp.Header.Get("HX-Redirect") != "/success" {
+		t.Fatalf("registration failed")
+	}
+
+	// Check the admin panel lists the registration.
+	adminResp := get(t, client, "/admin?token="+regToken+"&status=approved")
+	body := readBody(t, adminResp)
+
+	if adminResp.StatusCode != http.StatusOK {
+		t.Fatalf("admin panel returned %d", adminResp.StatusCode)
+	}
+	if !strings.Contains(body, username) {
+		t.Errorf("admin panel does not list registered user %q; body:\n%s", username, body)
+	}
+	if !strings.Contains(body, email) {
+		t.Errorf("admin panel does not show email %q", email)
+	}
 }
