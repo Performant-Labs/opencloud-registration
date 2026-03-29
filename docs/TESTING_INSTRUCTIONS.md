@@ -14,7 +14,7 @@ Before running tests, especially integration and end-to-end tests, you must ensu
    cd ~/Sites/pl-opencloud-server
    ./occtl start
    ```
-3. **Verify Health:** Verify that the OpenCloud instance is healthy (`./occtl status`) before running the test suite.
+3. **Verify Health (Automated):** We provide a script `./scripts/run_e2e_tests.sh` that automatically performs 100% pre-flight readiness checks on your environment, ensuring the target URLs (`cloud.opencloud.test` and `register.opencloud.test`) are reachable before proceeding.
 
 ---
 
@@ -51,10 +51,10 @@ cd ~/Sites/pl-opencloud-server
 From the repository root of `opencloud-registration`:
 
 ```bash
-go test ./e2e/ -v -timeout 60s
+./scripts/run_e2e_tests.sh
 ```
 
-> **Note:** The tests will automatically be skipped if the stack is not reachable. Ensure the container is healthy using `./occtl status`.
+> **Note:** The `run_e2e_tests.sh` script will automatically halt if the stack is not reachable. Ensure the container is healthy using `./occtl status` if the pre-flight checks fail.
 
 ### Custom Test Configuration
 
