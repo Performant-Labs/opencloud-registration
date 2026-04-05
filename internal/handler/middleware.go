@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 )
@@ -15,7 +16,7 @@ func AdminAuth(token string, next http.Handler) http.Handler {
 				got = strings.TrimPrefix(auth, "Bearer ")
 			}
 		}
-		if got != token {
+		if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
